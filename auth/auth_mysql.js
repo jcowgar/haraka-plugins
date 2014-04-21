@@ -21,7 +21,7 @@ exports.hook_capabilities = function(next, connection) {
 }
 
 exports.get_plain_passwd = function(user, cb) {
-	if (!server.notes.auth_mysql || !server.notes.auth_mysql.conn) {
+	if (!server.notes.auth_mysql || !server.notes.auth_mysql.pool) {
 		var config = this.config.get('auth_mysql.ini', {
 			host: 'localhost',
 			port: 3306,
@@ -30,26 +30,39 @@ exports.get_plain_passwd = function(user, cb) {
 			password_query: 'SELECT password FROM users WHERE user=?'
 		});
 
-		server.notes.auth_mysql = {};
-		server.notes.auth_mysql.config = config;
-		server.notes.auth_mysql.conn = mysql.createConnection({
-			host : config.main.host,
-			port : config.main.port,
-			charset: config.main.charset,
-			user : config.main.user,
-			password: config.main.password,
-			database: config.main.database,
-		});
-		server.notes.auth_mysql.conn.connect();
+		server.notes.auth_mysql = {
+			config: config,
+			pool  : mysql.createPool({
+				host : config.main.host,
+				port : config.main.port,
+				charset: config.main.charset,
+				user : config.main.user,
+				password: config.main.password,
+				database: config.main.database,
+			})
+		};
 	}
 
+	var plugin = this;
 	var myNotes = server.notes.auth_mysql;
-	myNotes.conn.query(myNotes.config.main.password_query, [user], function(err, results) {
-		if (results && results.length > 0) {
-			cb(results[0].password);
-		} else {
-			cb();
+	myNotes.pool.getConnection(function(err, conn) {
+		if (err) {
+			plugin.logerror("MySQL error: " + err);
+			return next(DENYSOFT);
 		}
+			
+		conn.query(myNotes.config.main.password_query, [user], function(err, results) {
+			if (err) {
+				plugin.logerror("MySQL error: " + err);
+				return next(DENYSOFT);
+			}
+
+			if (results && results.length > 0) {
+				cb(results[0].password);
+			} else {
+				cb();
+			}
+		});
 	});
 }
 
